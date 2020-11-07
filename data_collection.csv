@@ -1,0 +1,11 @@
+battle number ,battle deck,result,king'stower_destroyed,king'stower_destroy,arenatower_destroyed,arenatower_destroy,sudden death mode,time_used
+1,A,lose,0,0,1,0,yes,193
+2,A,win,0,0,0,1,yes,181
+3,A,win,0,0,0,1,yes,187
+4,A,win,0,0,0,1,no,120
+5,A,win,0,0,0,1,yes,207
+6,B,win,0,0,1,2,no,120
+7,B,lose,0,0,2,1,yes,220
+8,B,tie,0,0,1,1,yes,360
+9,B,lose,0,0,1,0,no,120
+10,B,win,0,0,0,2,no,112
