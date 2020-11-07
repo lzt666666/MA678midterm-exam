@@ -1,0 +1,218 @@
+---
+title: "Midterm Exam"
+author: "Zhitian Liu"
+date: "11/2/2020"
+output:
+  html_document:
+    df_print: paged
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(dummies)
+library(rstanarm)
+library(bayesplot)
+library(coefplot)
+library(aod)
+```
+
+## Instruction
+
+This is your midterm exam that you are expected to work on it alone.  You may NOT  discuss any of the content of your exam with anyone except your instructor. This includes text, chat, email and other online forums.  We expect you to respect and follow the [GRS Academic and Professional Conduct Code](http://www.bu.edu/cas/files/2017/02/GRS-Academic-Conduct-Code-Final.pdf). 
+
+Although you may NOT ask anyone directly, you are allowed to use external resources such as R codes on the Internet.  If you do use someone's code, please make sure you clearly cite the origin of the code.
+
+When you finish, please compile and submit the PDF file and the link to the GitHub repository that contains the entire analysis.
+
+
+## Introduction
+
+In this exam, you will act as both the client and the consultant for the data that you collected in the data collection exercise (20pts).  Please note that you are not allowed to change the data.  The goal of this exam is to demonstrate your ability to perform the statistical analysis that you learned in this class so far.  It is important to note that significance of the analysis is not the main goal of this exam but the focus is on the appropriateness of your approaches.
+
+### Data Description (10pts)
+
+Please explain what your data is about and what the comparison of interest is.  In the process, please make sure to demonstrate that you can load your data properly into R.
+ 
+```{r }
+
+data=read.csv("https://raw.githubusercontent.com/lzt666666/MA678midterm-exam/main/data_collection.csv")
+head(data)
+#My friend Cherry and I are both super fans of Clash Royale, a mobile strategy video game developed and published by Supercell. Cherry has a card deck and she’s really proud of it. I prepared two different card decks; I wonder which card deck is better to use to defeat Cherry in a friendly battle. Now lets look at the dataset.
+```
+explain of variables:
+Result: win, lose or tie game.
+king'stower_destroyed: 0-my king’s tower wasn’t destroyed by Cherry; 1- my king’s tower was destroyed by Cherry
+king'stower_destroy: 0--I destroy Cherry’s king’s tower; 1—I didn’t destroy Cherry’s king’s tower.
+arenatower_destroyed: number of my arena tower destroyed by Cherry.
+arenatower_destroy: number of Cherry’s arena tower destroyed by me
+sudden death mode: Is the game go to the sudden death mode? Yes or no.
+time_used: time used for each battle. measured in second.
+
+Questions want to be solved: Which battle deck has a better chance to win? Can I predict the result of a game ?
+
+### EDA (10pts)
+
+Please create one (maybe two) figure(s) that highlights the contrast of interest.  Make sure you think ahead and match your figure with the analysis.  For example, if your model requires you to take a log, make sure you take log in the figure as well.
+
+```{r }
+summary(data)
+##data cleaning
+#Firstly, we need to clean the data, we noticed there are two columns with all the value to be 0, It doesn't give any information, so we delete this two columns.
+data=select(data,battle.deck,result, arenatower_destroyed,arenatower_destroy,sudden.death.mode,time_used )
+#Because the outcome is Ternary, It's hard to analyze, so I group the battle which I lost and tied together as "NOT WIN" to make the outcome bin
+data$result[which(data$result=="lose"|data$result=="tie")]="not_win"
+
+#We are going to use logistic regression later, so I tranformed the outcome "Result" to 0-1 format.
+data$result=ifelse(data$result[]=="win",1,0)
+
+#EDA
+#In order to better understand the data, We are going to do some EDA. FIrstly,we need to see the relationship between result and different battle deck.
+A=c(0,1,1,1,1);B=c(1,0,0,0,1)
+data_eda=data.frame(A,B)
+data_eda
+#As we can see, use battle deck A is more likely to win the game. We need to prove that in the later analysis.
+#The following boxplot shows the relationship between battle deck and time, Obviously, the game with battle deck A generally ends in 180-200 seconds, while the game with battle deck B fluctuates greatly.
+boxplot(time_used~battle.deck,data=data,xlab="battle deck",ylab="",col=c("pink","lightblue"),
+        main="Exploratory Data Analysis Plot\n of Gender Versus Height")
+
+#The bar chart below shows the time spent on two battle decks when the results of winning and losing are different. For battle deck A, regardless of winning or losing, the average game is often relatively stable at around 200, but for battle deck B, the winning game is often much shorter than the losing game.
+ggplot(data, aes(result, time_used)) + geom_bar(aes(fill = battle.deck), position = "dodge",stat='identity')+ggtitle("Result VS average time used")
+
+
+```
+
+### Power Analysis (10pts)
+
+Please perform power analysis on the project.  Use 80% power, the sample size you used and infer the level of effect size you will be able to detect.  Discuss whether your sample size was enough for the problem at hand.  Please note that method of power analysis should match the analysis.  Also, please clearly state why you should NOT use the effect size from the fitted model.
+
+```{r }
+library(pwr)
+pwr.t.test(n=5,power=0.8,sig.level=0.05, type = "two.sample")
+#After running a two-sample t test, the effect siz of the data is 2.02, which is quite weird, I think this is due to my data size is too small.
+#If I use d=0.5 as my objective effect size, let's see how many observations do I need
+pwr.t.test(n=NULL,d=0.5, power=0.8,sig.level=0.05, type = "two.sample")
+#If we want effect size to be normal, I need 64 sample size for each group.
+```
+To see what sample size is appropriate for our data. we use $$|\mu_a-\mu_b|/\sigma$$ to calculate the effect size.
+```{r}
+d1=abs(mean(data$time_used[1:5])-mean(data$time_used[6:10]))/sd(data$time_used)
+#
+pwr.t.test(n=NULL,d=d1,power=0.8,sig.level=0.05, type = "two.sample")
+#It seems that we need 1135 observations for each group in ou r data.
+
+```
+
+
+### Modeling (10pts)
+
+Please pick a regression model that best fits your data and fit your model.  Please make sure you describe why you decide to choose the model. Also, if you are using GLM, make sure you explain your choice of link function as well.
+```{r }
+#The outcome of my data is binary, so I'm pretty sure I need to fit a logistic regression model. I decide to use glm function with link "logit".
+
+#After checking my data again, I found that it is hard to include the columns "arenatower_destory" and "arenatower_destroyed" to the fitted model. When I tried to add this two columns to the model, they Seriously affect the accuracy of the model (Displayed by AIC and p value).
+#I thought it was because the two columns of data were categorical, so I transfer them to dummy variable.
+
+#create dummy variables
+
+
+data$arenatower_destroy%>%as.factor()
+data_dummy=fastDummies::dummy_cols(data,select_columns =c("arenatower_destroy","arenatower_destroyed") )
+#fit a logistic model with dummy variable
+fit1=glm(result~time_used+arenatower_destroy_1+arenatower_destroyed_0+arenatower_destroyed_2, data=data_dummy, family=binomial(link="logit"))
+summary(fit1)
+#However, the p-value is still close to 1, which is bad. I'm quite confused about this, I guess another reason for this maybe is this these two columns of data directly determine the outcome. As now, I don't know how to deal with it, so I choose not to use them in this project.
+#model selection
+fit2=glm(result~battle.deck+time_used, data=data, family=binomial(link="logit"))
+summary(fit2)
+#After filter different parameters into the model (including interactions and log scale...I didn't show the process in the code), according to p-value and AIC, I decided to use a single variable-time_used in the model besides the indicator variable "battle.deck".
+
+```
+
+### Validation (10pts)
+
+Please perform a necessary validation and argue why your choice of the model is appropriate.  
+
+```{r }
+#As we can see from the above output, the fitting model isn't great, the p-value is around 0.5 for each variable, but it is understandable since I only have 10 observations.
+#We now use Leave One Out (LOO) Cross Validation to check our model. In order to use Loo function, we need to refit the same model using "stan_glm"
+fit3=stan_glm(result~battle.deck+time_used, data=data, family=binomial(link="logit"),refresh=0)
+print(loo(fit3))
+#From the output, we noticed that All Pareto k estimates are ok (k < 0.7), and elpd_loo is close to 0.
+
+#We can also do a Posterior Predictive Checks to see the fit of our model.
+result_rep=posterior_predict(fit3)
+ppc_dens_overlay(data$result,result_rep) + scale_y_continuous(breaks=NULL)
+#From the below output, We noticed that although the light blue line is sparse(which I don't know why, I thought it will generate 4000 simulations), We can observed there are many similarities between the original data and the predicted value pattern.
+
+#Hence, I think this model is already very good with so few observations.
+```
+
+
+### Inference (10pts)
+
+Based on the result so far please perform statistical inference to compare the comparison of interest.
+
+we calculate the 95% confidence interval (CI) using $$\hat{\beta}_{i}\pm 2s.e.$$
+```{r }
+#confidence interval for battle.deckB
+coef=summary(fit2)$coefficients
+CI_deckB=c((coef[2]-2*coef[2,2]),(coef[2]+2*coef[2,2]))
+#confidence interval for time_used
+CI_time_used=c((coef[3]-2*coef[3,2]),(coef[3]+2*coef[3,2]))
+CI_time_used;CI_deckB
+#The 95%confidence interval for variable time_used is (-0.21,0.1); 95%confidence interval for variable deck B is (-17.07,7.55)
+#we can also use function confinct()
+#We can plot the CI for the model we choosed before
+coefplot(fit2, vertical=FALSE, var.las=1, frame.plot=TRUE)
+# Also we can do a Wald test to test the overall effect of variable battle.deck.
+wald.test(b = coef(fit2), Sigma = vcov(fit2), Terms = 2)
+#The p-value is 0.44,chi-squared test statistic is 0.6 with 1 degrees of freedom, The effect of Battle deck is not significant, which is acceptable because I only have 10 observations in my data.
+```
+I'm not sure how to compare the comparison of interest
+
+### Discussion (10pts)
+
+Please clearly state your conclusion and the implication of the result.
+
+The Questions we asked before: Which battle deck has a better chance to win? Can I predict the result of a game ?
+
+```{r}
+#First of all: the answer to the previous question is: By using deck A, I will have a better chance to win the game. And yes, I can predict the result of the game according to which battle deck I used and the time I will used in a battle. Although the model is not in a good fit.
+
+#I obtain the answers by interpreting the coefficient of the model:
+#The coefficient of battle.deckB is -4.7, which means with same time of game, carry the battle deck A, versus carry deck B, changes the log odds of result by -4.7. By using the below formula, I know deck A has a better chance to win.
+
+```
+$${p} = \frac{exp(\beta_0 + \beta_1 x_1 + \cdots + \beta_k x_k)}{1+exp(\beta_0 + \beta_1 x_1 + \cdots + \beta_k x_k)}$$.
+
+
+### Limitations and future opportunity. (10pts)
+
+Please list concerns about your analysis.  Also, please state how you might go about fixing the problem in your future study.
+```{r}
+#There are 2 main problems occurs in the study. 
+
+#The first problem that arises is that I failed to solve how to fit the the 2 categorical variables into the model, and this 2 variables are directly related to the outcome.
+
+# The second problem is that the sample size of this data is too small, resulting in each test not being significant, EDA and model are very unconvincing, and the real relationship between variables are very foggy.
+
+# In addition to these two problems, there are some minor loopholes. For example, I don’t understand the power analysis problem very well. I know the sample size is not enough, But I don't know which sample size generated from test should I use, 1134 or 64 for each group?
+
+# Another point is that I found that this model is not meaningful in making predictions. I need the time i used in a game to make predictions about the outcome, but at that time, the game is already overed.
+
+
+# In the following study, generally speaking, I have to understand the principles behind these r functions more deeply, and also frequently review the previous knowledge. I have already forgotten some of the knowledge of logistic regression.
+
+# The things need to be done right away is to figure out why my model becomes very bad as soon as the two columns of categorical data are added.
+```
+
+
+### Comments or questions
+If you have any comments or questions, please write them here.
+
